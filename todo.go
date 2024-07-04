@@ -45,7 +45,7 @@ func main() {
 	router.SetTrustedProxies(nil)
 	config := cors.DefaultConfig()
 	config.AllowOrigins = strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
-	LOG.Println(config.AllowHeaders)
+	LOG.Println(config.AllowOrigins)
 
 	router.Use(cors.New(config))
 
