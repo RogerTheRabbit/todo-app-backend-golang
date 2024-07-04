@@ -53,7 +53,7 @@ func main() {
 	router.POST("/todos", createTodo)
 	router.DELETE("/todos/:id", deleteTodo)
 
-	router.Run("localhost:8080")
+	router.Run("0.0.0.0:8080")
 }
 
 func getTodos(context *gin.Context) {
