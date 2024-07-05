@@ -60,7 +60,7 @@ func main() {
 	router.POST("/todos", createTodo)
 	router.DELETE("/todos/:id", deleteTodo)
 
-	router.Run("0.0.0.0:8080")
+	router.Run(fmt.Sprintf("%s:%s", os.Getenv("SERVER_ADDRESS"), os.Getenv("SERVER_PORT")))
 }
 
 func getTodos(context *gin.Context) {
