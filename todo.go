@@ -36,8 +36,10 @@ func main() {
 		LOG.Println("Did not load .env file")
 	}
 
+	postgresAddress := fmt.Sprintf("postgres://%s:%s@%s", os.Getenv("PG_USERNAME"), os.Getenv("PG_PASSWORD"), os.Getenv("PG_ADDRESS"))
+
 	var err error
-	dbpool, err = pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
+	dbpool, err = pgxpool.New(context.Background(), postgresAddress)
 	if err != nil {
 		LOG.Fatalf("Unable to create database connection pool: %v\n", err)
 	}
