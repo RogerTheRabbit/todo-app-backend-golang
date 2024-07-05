@@ -28,24 +28,31 @@ var LOG *log.Logger
 
 func main() {
 
+	dotEnvErr := godotenv.Load()
+
 	LOG = log.Default()
 
-	dotEnvErr := godotenv.Load()
 	if dotEnvErr != nil {
-		LOG.Println("Error loading .env file")
+		LOG.Println("Did not load .env file")
 	}
+
 	var err error
 	dbpool, err = pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		LOG.Fatalf("Unable to create database connection pool: %v\n", err)
 	}
 	defer dbpool.Close()
+	LOG.Println("Pininging Database")
+	err = dbpool.Ping(context.Background())
+	if err != nil {
+		LOG.Fatalln(err)
+	}
+	LOG.Println("Database ok!")
 
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
 	config := cors.DefaultConfig()
 	config.AllowOrigins = strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
-	LOG.Println(config.AllowOrigins)
 
 	router.Use(cors.New(config))
 
