@@ -10,5 +10,3 @@ VALUES
   ('Get Groceries', 'Milk, eggs, coffee'),
   ('Finish this program', 'code code code'),
   ('Sleep', 'seriously, its late af');
-  
-select * from todo;
