@@ -28,7 +28,7 @@ var LOG *log.Logger
 
 func main() {
 
-	dotEnvErr := godotenv.Load()
+	dotEnvErr := godotenv.Load("stack.env")
 
 	LOG = log.Default()
 
