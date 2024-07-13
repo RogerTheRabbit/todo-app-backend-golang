@@ -61,6 +61,7 @@ func main() {
 	router.GET("/todos", getTodos)
 	router.POST("/todos", createTodo)
 	router.DELETE("/todos/:id", deleteTodo)
+	router.PUT("/todos", updateTodo)
 
 	router.Run(fmt.Sprintf("%s:%s", os.Getenv("SERVER_ADDRESS"), os.Getenv("SERVER_PORT")))
 }
@@ -96,6 +97,19 @@ func deleteTodo(context *gin.Context) {
 	}
 }
 
+func updateTodo(context *gin.Context) {
+	var updatedTodo Todo
+
+	if err := context.BindJSON(&updatedTodo); err != nil {
+		LOG.Panic(err)
+	}
+	LOG.Printf("GOT PUT REQUEST FOR: %d", updatedTodo.ID)
+
+	if err := updateTodoDB(updatedTodo); err != nil {
+		LOG.Panic(err)
+	}
+}
+
 func getAllTodosDB() ([]Todo, error) {
 	var todos []Todo
 
@@ -127,6 +141,15 @@ func createTodoDB(todo Todo) (Todo, error) {
 
 func deleteTodoDB(id string) error {
 	rows, err := dbpool.Query(context.Background(), "DELETE FROM todo WHERE id=$1", id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return nil
+}
+
+func updateTodoDB(todo Todo) error {
+	rows, err := dbpool.Query(context.Background(), "UPDATE todo SET title=$2, description=$3 WHERE id=$1", todo.ID, todo.Title, todo.Description)
 	if err != nil {
 		return err
 	}
