@@ -16,11 +16,16 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// album represents data about a record album.
 type Todo struct {
-	ID          int64  `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	ID          int64   `json:"id"`
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Username    *string `json:"username"`
+}
+
+type Reminder struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
 }
 
 var dbpool *pgxpool.Pool
@@ -63,6 +68,8 @@ func main() {
 	router.DELETE("/todos/:id", deleteTodo)
 	router.PUT("/todos", updateTodo)
 
+	router.POST("/reminders", createReminder)
+
 	router.Run(fmt.Sprintf("%s:%s", os.Getenv("SERVER_ADDRESS"), os.Getenv("SERVER_PORT")))
 }
 
@@ -92,9 +99,12 @@ func deleteTodo(context *gin.Context) {
 	id := context.Param("id")
 	LOG.Printf("GOT DELETE REQUEST FOR: %s", id)
 
-	if err := deleteTodoDB(id); err != nil {
+	deltedCount, err := deleteTodoDB(id)
+	if err != nil {
 		LOG.Panic(err)
 	}
+
+	context.IndentedJSON(http.StatusOK, deltedCount)
 }
 
 func updateTodo(context *gin.Context) {
@@ -110,18 +120,32 @@ func updateTodo(context *gin.Context) {
 	}
 }
 
+func createReminder(context *gin.Context) {
+	var newReminder Reminder
+
+	if err := context.BindJSON(&newReminder); err != nil {
+		return
+	}
+
+	createdReminder, err := createReminderDB(newReminder)
+	if err != nil {
+		LOG.Panic(err)
+	}
+	context.IndentedJSON(http.StatusCreated, createdReminder)
+}
+
 func getAllTodosDB() ([]Todo, error) {
 	var todos []Todo
 
-	rows, err := dbpool.Query(context.Background(), "SELECT * FROM todo")
+	rows, err := dbpool.Query(context.Background(), "SELECT todo.id, todo.title, todo.description, reminders.username FROM todo LEFT JOIN reminders ON todo.id=reminders.todo_id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var todo Todo
-		if err := rows.Scan(&todo.ID, &todo.Title, &todo.Description); err != nil {
-			return nil, fmt.Errorf("failed to extract todo from database query")
+		if err := rows.Scan(&todo.ID, &todo.Title, &todo.Description, &todo.Username); err != nil {
+			return nil, fmt.Errorf("failed to extract todo from database query: %s", err)
 		}
 		todos = append(todos, todo)
 	}
@@ -136,16 +160,41 @@ func createTodoDB(todo Todo) (Todo, error) {
 	}
 	defer rows.Close()
 
+	if rows.Next() {
+		if err := rows.Scan(&createdTodo.ID, &createdTodo.Title, &createdTodo.Description, &createdTodo.Username); err != nil {
+			return createdTodo, fmt.Errorf("failed to extract todo from database query: %s", err)
+		}
+
+	}
+
 	return createdTodo, nil
 }
 
-func deleteTodoDB(id string) error {
-	rows, err := dbpool.Query(context.Background(), "DELETE FROM todo WHERE id=$1", id)
+func deleteTodoDB(id string) (int, error) {
+	reminderRows, reminderErr := dbpool.Query(context.Background(), "DELETE FROM reminders WHERE todo_id=$1  RETURNING *", id)
+	rows, err := dbpool.Query(context.Background(), "DELETE FROM todo WHERE id=$1 RETURNING *", id)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	if reminderErr != nil {
+		return 0, reminderErr
 	}
 	defer rows.Close()
-	return nil
+	defer reminderRows.Close()
+
+	var deletedCount = 0
+	var deletedReminderCount = 0
+
+	for rows.Next() {
+		deletedCount++
+	}
+	for reminderRows.Next() {
+		deletedReminderCount++
+	}
+
+	LOG.Printf("Deleted %d todos and %d reminders", deletedCount, deletedReminderCount)
+
+	return deletedCount + deletedReminderCount, nil
 }
 
 func updateTodoDB(todo Todo) error {
@@ -155,4 +204,15 @@ func updateTodoDB(todo Todo) error {
 	}
 	defer rows.Close()
 	return nil
+}
+
+func createReminderDB(reminder Reminder) (Reminder, error) {
+	var createdReminder Reminder
+	rows, err := dbpool.Query(context.Background(), "INSERT INTO reminders (todo_id, username) VALUES($1, $2)", reminder.ID, reminder.Username)
+	if err != nil {
+		return createdReminder, err
+	}
+	defer rows.Close()
+
+	return createdReminder, nil
 }
