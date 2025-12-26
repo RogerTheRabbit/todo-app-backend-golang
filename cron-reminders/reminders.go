@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -26,6 +27,8 @@ type DiscordMsg struct {
 
 var LOG *log.Logger
 
+const CHECKS_PER_MIN = 20
+
 func main() {
 
 	dotEnvErr := godotenv.Load(".env")
@@ -36,12 +39,14 @@ func main() {
 		LOG.Println("Did not load .env file")
 	}
 
-	if shouldSendReminder() {
-		notifiedTodos := notify()
-		if notifiedTodos == nil {
-			return
+	for range CHECKS_PER_MIN {
+		if shouldSendReminder() {
+			notifiedTodos := notify()
+			if notifiedTodos != nil {
+				deleteTodos(notifiedTodos)
+			}
 		}
-		deleteTodos(notifiedTodos)
+		time.Sleep(60 / CHECKS_PER_MIN * time.Second)
 	}
 }
 
