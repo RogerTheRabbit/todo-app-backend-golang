@@ -37,20 +37,24 @@ func main() {
 	}
 
 	if shouldSendReminder() {
-		notify()
+		notifiedTodos := notify()
+		if notifiedTodos == nil {
+			return
+		}
+		deleteTodos(notifiedTodos)
 	}
 }
 
 func shouldSendReminder() bool {
 	resp, err := http.Get(os.Getenv("USER_ONLINE_URI"))
 	if err != nil {
-		log.Fatalln("Failed to fetch online status", err)
+		log.Fatalf("Failed to fetch online status: %v\n", err)
 		return true
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalln("Failed to parse response body", err)
+		log.Fatalf("Failed to parse response body: %v\n", err)
 		return true
 	}
 
@@ -61,13 +65,13 @@ func shouldSendReminder() bool {
 func fetchTodos() ([]Todo, error) {
 	resp, err := http.Get(os.Getenv("TODOS_URI"))
 	if err != nil {
-		log.Fatalln("Failed to fetch todos", err)
+		log.Fatalf("Failed to fetch todos: %v\n", err)
 		return nil, err
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalln("Failed to parse todo response", err)
+		log.Fatalf("Failed to parse todo response: %v\n", err)
 		return nil, err
 	}
 
@@ -87,15 +91,15 @@ func fetchTodos() ([]Todo, error) {
 	return filteredTodos, nil
 }
 
-func notify() {
+func notify() []Todo {
 	var todos, err = fetchTodos()
 
 	if err != nil || len(todos) == 0 {
 		// Send Message notifying of failure (maybe we don't want that so we don't get spammed)
-		return
+		return nil
 	}
 
-	LOG.Printf("User is offline and has %d todos, sending message now!", len(todos))
+	LOG.Printf("User is offline and has %d todos, sending message now!\n", len(todos))
 
 	var formattedTodos []string
 
@@ -115,8 +119,26 @@ func notify() {
 
 	if err != nil {
 		LOG.Fatal(err)
-		return
+		return nil
 	}
 
-	// TOOD: Delete TODOS
+	return todos
+}
+
+func deleteTodos(todos []Todo) {
+
+	for _, todo := range todos {
+		req, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/%d", os.Getenv("TODOS_URI"), todo.ID), nil)
+		if err != nil {
+			log.Fatalf("Error creating request: %v\n", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Fatalf("Error sending request: %v\n", err)
+		}
+		defer resp.Body.Close()
+
+		fmt.Printf("Deleted TODO w/ ID %d status: %s\n", todo.ID, resp.Status)
+	}
 }
