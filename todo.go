@@ -78,6 +78,9 @@ func getTodos(context *gin.Context) {
 	if err != nil {
 		LOG.Panic(err)
 	}
+	if todos == nil {
+		todos = []Todo{}
+	}
 	context.JSON(http.StatusOK, todos)
 }
 
