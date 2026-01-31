@@ -4,16 +4,20 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	"golang.org/x/oauth2"
 )
 
 type Todo struct {
@@ -28,12 +32,33 @@ type Reminder struct {
 	Username string `json:"username"`
 }
 
+type UserInfo struct {
+	Sub      string `json:"sub"` // depending on your Authentik mappings
+	UserName string `json:"preferred_username"`
+	// add fields as needed based on Authentik property mappings
+}
+
+const AuthUserKey = "user"
+const LOGIN_URL = "/auth/login"
+
 var dbpool *pgxpool.Pool
 var LOG *log.Logger
+var oauthConfig *oauth2.Config
 
 func main() {
 
 	dotEnvErr := godotenv.Load("stack.env")
+
+	oauthConfig = &oauth2.Config{
+		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
+		ClientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
+		RedirectURL:  os.Getenv("OAUTH_REDIRECT_URL"),
+		Scopes:       []string{"openid", "profile"},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  os.Getenv("OAUTH_AUTH_URL"),
+			TokenURL: os.Getenv("OAUTH_TOKEN_URL"),
+		},
+	}
 
 	LOG = log.Default()
 
@@ -59,21 +84,109 @@ func main() {
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
 	config := cors.DefaultConfig()
-	config.AllowOrigins = strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
+	config.AllowOrigins = []string{os.Getenv("APP_URL")}
+	config.AllowCredentials = true
+	store := cookie.NewStore(
+		[]byte(getEnv("SESSION_SIGNING_KEY", string(genRandBytes(64)))),
+		[]byte(getEnv("SESSION_ENCRYPTION_KEY", string(genRandBytes(32)))),
+		[]byte(os.Getenv("SESSION_SIGNING_KEY_OLD")),
+		[]byte(os.Getenv("SESSION_ENCRYPTION_KEY_OLD")),
+	)
+	store.Options(sessions.Options{HttpOnly: true, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 60 * 60})
 
+	router.Use(sessions.Sessions("auth", store))
 	router.Use(cors.New(config))
 
-	router.GET("/todos", getTodos)
-	router.POST("/todos", createTodo)
-	router.DELETE("/todos/:id", deleteTodo)
-	router.PUT("/todos", updateTodo)
+	authorized := router.Group("/")
+	authorized.Use(AuthRequired())
+	{
+		authorized.GET("/todos", getTodos)
+		authorized.POST("/todos", createTodo)
+		authorized.DELETE("/todos/:id", deleteTodo)
+		authorized.PUT("/todos", updateTodo)
+		authorized.GET("/whoami", whoami)
 
-	router.POST("/reminders", createReminder)
+		authorized.POST("/reminders", createReminder)
+	}
+
+	router.GET(LOGIN_URL, getLogin)
+	router.GET("/auth/callback", getAuthCallback)
 
 	router.Run(fmt.Sprintf("%s:%s", os.Getenv("SERVER_ADDRESS"), os.Getenv("SERVER_PORT")))
 }
 
+func AuthRequired() gin.HandlerFunc {
+	return func(context *gin.Context) {
+		session := sessions.Default(context)
+		if session == nil || session.Get(AuthUserKey) == nil {
+			LOG.Println("User Unauthenticated")
+			context.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		context.Set(AuthUserKey, session.Get(AuthUserKey))
+	}
+}
+
+func getLogin(context *gin.Context) {
+	state := "randomCSRFToken" // TODO: generate and store in session
+	url := oauthConfig.AuthCodeURL(state)
+	context.Redirect(http.StatusFound, url)
+}
+
+func getAuthCallback(ginContext *gin.Context) {
+	// state := c.Query("state")
+	code := ginContext.Query("code")
+
+	// TODO: validate `state` against what you stored
+
+	ctx := context.Background()
+	token, err := oauthConfig.Exchange(ctx, code)
+	if err != nil {
+		LOG.Println("token exchange error:", err)
+		ginContext.JSON(http.StatusBadRequest, gin.H{"error": "token exchange failed"})
+		return
+	}
+
+	// Use token to create an HTTP client or fetch userinfo
+	client := oauthConfig.Client(ctx, token)
+
+	resp, err := client.Get(os.Getenv("OAUTH_USER_INFO_URL"))
+	if err != nil {
+		LOG.Println("userinfo error:", err)
+		ginContext.JSON(http.StatusBadRequest, gin.H{"error": "failed to fetch user info"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		ginContext.String(resp.StatusCode, "userinfo responded with status %d", resp.StatusCode)
+		return
+	}
+
+	var userInfo UserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		log.Println("decode userinfo error:", err)
+		ginContext.String(http.StatusInternalServerError, "decode userinfo failed")
+		return
+	}
+
+	session := sessions.Default(ginContext)
+	session.Set(AuthUserKey, userInfo.UserName)
+	session.Save()
+
+	ginContext.Redirect(http.StatusFound, os.Getenv("APP_URL"))
+}
+
+func whoami(context *gin.Context) {
+	session := sessions.Default(context)
+	user := session.Get(AuthUserKey)
+	context.JSON(200, gin.H{"user": user})
+
+}
+
 func getTodos(context *gin.Context) {
+	user := context.MustGet(AuthUserKey).(string)
+	LOG.Println("Getting TODOs for USER: ", user)
 	todos, err := getAllTodosDB()
 	if err != nil {
 		LOG.Panic(err)
@@ -218,4 +331,19 @@ func createReminderDB(reminder Reminder) (Reminder, error) {
 	defer rows.Close()
 
 	return createdReminder, nil
+}
+
+func genRandBytes(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		LOG.Fatalf("failed to read random bytes: %v", err)
+	}
+	return b
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
 }
