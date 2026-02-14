@@ -112,6 +112,8 @@ func main() {
 	router.GET(LOGIN_URL, getLogin)
 	router.GET("/auth/callback", getAuthCallback)
 
+	router.GET("/healthcheck", healthcheck)
+
 	router.Run(fmt.Sprintf("%s:%s", os.Getenv("SERVER_ADDRESS"), os.Getenv("SERVER_PORT")))
 }
 
@@ -248,6 +250,16 @@ func createReminder(context *gin.Context) {
 		LOG.Panic(err)
 	}
 	context.IndentedJSON(http.StatusCreated, createdReminder)
+}
+
+func healthcheck(context *gin.Context) {
+	_, err := getAllTodosDB()
+	if err != nil {
+		LOG.Panic(err)
+		context.Status(http.StatusInternalServerError)
+		return
+	}
+	context.Status(http.StatusOK)
 }
 
 func getAllTodosDB() ([]Todo, error) {
